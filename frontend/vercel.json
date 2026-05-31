@@ -3,10 +3,6 @@
     {
       "source": "/api/(.*)",
       "destination": "https://m3music-backend-v1.onrender.com"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/index.html"
     }
   ]
 }
