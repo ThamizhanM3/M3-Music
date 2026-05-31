@@ -9,7 +9,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:5000',
+        target: 'https://m3music-backend-v1.onrender.com',
         changeOrigin: true,
       }
     }
