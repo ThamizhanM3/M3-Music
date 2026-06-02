@@ -42,9 +42,9 @@ function App() {
         
         {/* User Routes */}
         <Route path="/" element={
-          <ProtectedRoute>
+          // <ProtectedRoute>
             <Layout />
-          </ProtectedRoute>
+          // </ProtectedRoute>
         }>
           <Route index element={<Home />} />
           <Route path="search" element={<Search />} />
@@ -59,9 +59,9 @@ function App() {
 
         {/* Admin Routes */}
         <Route path="/admin" element={
-          <AdminRoute>
+          // <AdminRoute>
             <Layout isAdmin />
-          </AdminRoute>
+          // </AdminRoute>
         }>
           <Route index element={<AdminDashboard />} />
           <Route path="users" element={<UserManager />} />
