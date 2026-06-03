@@ -18,10 +18,11 @@ import {
   HeadObjectCommand
 } from '@aws-sdk/client-s3';
 
-// ✅ Load S3 bucket from env
 const S3_BUCKET = process.env.S3_BUCKET_NAME;
 
-// ✅ Upload music (NO LOGIC CHANGE NEEDED)
+//////////////////////////////////////////////////////
+// ✅ UPLOAD MUSIC
+//////////////////////////////////////////////////////
 export const uploadMusic = async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
@@ -29,15 +30,10 @@ export const uploadMusic = async (req, res) => {
     }
 
     const { generateGradientPlaceholder } = await import('../services/metadataService.js');
-
     const addedSongs = [];
 
     for (const file of req.files) {
-      const { key, url } = await uploadFileBuffer(
-        file.buffer,
-        file.originalname,
-        'audio'
-      );
+      const { key, url } = await uploadFileBuffer(file.buffer, file.originalname, 'audio');
 
       const metadata = await extractMetadata(file.buffer, {
         mimeType: file.mimetype,
@@ -45,175 +41,128 @@ export const uploadMusic = async (req, res) => {
         fileSize: file.size
       });
 
-      let title = req.body.title || metadata?.title || file.originalname.replace(/\.[^/.]+$/, "");
-      let artist = req.body.artist || metadata?.artist || 'Unknown Artist';
-      let singer = req.body.singer || metadata?.singer || artist;
-      let musicDirector = req.body.musicDirector || metadata?.musicDirector || 'Unknown Composer';
-      let lyricist = req.body.lyricist || metadata?.lyricist || 'Unknown Lyricist';
-      let genre = req.body.genre || metadata?.genre || 'Unknown Genre';
-      let language = req.body.language || metadata?.language || 'Unknown';
-      let album = req.body.album || metadata?.album || 'Unknown Album';
-      let year = req.body.year || metadata?.year || new Date().getFullYear();
-      let duration = metadata?.duration || 0;
-      let bitrate = metadata?.bitrate || 192;
-      let fileSize = file.size;
-      let mimeType = file.mimetype;
-
-      let thumbnailUrl = '';
-      let artworkUrl = '';
-
-      let artworkBuffer;
-
-      if (metadata?.artwork?.buffer) {
-        artworkBuffer = metadata.artwork.buffer;
-      } else {
-        try {
-          artworkBuffer = await generateGradientPlaceholder();
-        } catch (err) {
-          console.error('Gradient error:', err);
-        }
-      }
-
-      if (artworkBuffer) {
-        try {
-          const artworkResult = await uploadFromBuffer(
-            artworkBuffer,
-            `${file.originalname}-artwork.jpg`,
-            'artwork'
-          );
-
-          artworkUrl = artworkResult.url;
-          thumbnailUrl = artworkUrl;
-        } catch (err) {
-          console.error('Artwork upload failed:', err);
-        }
-      }
-
-      const song = await SongCache.create({
-        cloudinaryId: key, // ✅ keep same field (no schema change needed)
-        url,
-        title,
-        artist,
-        singer,
-        musicDirector,
-        lyricist,
-        genre,
-        language,
-        album,
-        year,
-        duration,
-        bitrate,
-        fileSize,
-        mimeType,
-        artworkUrl,
-        cloudflareKey: key, // ✅ optional: rename later if you want
-        thumbnailUrl,
-        composer: musicDirector,
-        folder: 'm3-music-library',
-        uploadedBy: req.user._id
-      });
-
-      addedSongs.push(song);
-    }
-
-    res.status(201).json({ message: 'Files uploaded successfully', songs: addedSongs });
-
-  } catch (error) {
-    console.error('Upload Error:', error);
-    res.status(500).json({ message: 'Failed to upload files', error: error.message });
-  }
-};
-
-// ✅ Sync (NO CHANGE except naming stays same)
-export const syncCloudinary = async (req, res) => {
-  try {
-    const { generateGradientPlaceholder } = await import('../services/metadataService.js');
-
-    const files = await getCloudinaryFiles('audio');
-    const existingSongs = await SongCache.find({});
-    const existingIds = existingSongs.map(s => s.cloudinaryId);
-
-    const currentIds = files.map(f => f.public_id);
-    const newFiles = files.filter(f => !existingIds.includes(f.public_id));
-
-    const addedSongs = [];
-
-    for (const file of newFiles) {
-      const metadata = await extractMetadata(file.secure_url);
+      const title = req.body.title || metadata?.title || file.originalname.replace(/\.[^/.]+$/, "");
+      const artist = req.body.artist || metadata?.artist || 'Unknown Artist';
+      const musicDirector = req.body.musicDirector || 'Unknown Composer';
 
       let artworkUrl = '';
-      let thumbnailUrl = '';
 
-      let artworkBuffer;
-
-      if (metadata?.artwork?.buffer) {
-        artworkBuffer = metadata.artwork.buffer;
-      } else {
+      let artworkBuffer = metadata?.artwork?.buffer;
+      if (!artworkBuffer) {
         artworkBuffer = await generateGradientPlaceholder();
       }
 
       if (artworkBuffer) {
-        const result = await uploadFromBuffer(artworkBuffer, 'artwork.jpg', 'artwork');
+        const result = await uploadFromBuffer(artworkBuffer, `${file.originalname}-artwork.jpg`, 'artwork');
         artworkUrl = result.url;
-        thumbnailUrl = artworkUrl;
       }
 
       const song = await SongCache.create({
-        cloudinaryId: file.public_id,
-        url: file.secure_url,
-        title: metadata?.title || 'Unknown',
-        artist: metadata?.artist || 'Unknown',
+        cloudinaryId: key,
+        url,
+        title,
+        artist,
+        musicDirector,
+        bitrate: metadata?.bitrate || 192,
+        fileSize: file.size,
+        mimeType: file.mimetype,
         artworkUrl,
-        thumbnailUrl,
         uploadedBy: req.user._id
       });
 
       addedSongs.push(song);
     }
 
-    const toRemove = existingIds.filter(id => !currentIds.includes(id));
+    res.status(201).json({ message: 'Uploaded', songs: addedSongs });
 
-    if (toRemove.length > 0) {
-      await SongCache.deleteMany({ cloudinaryId: { $in: toRemove } });
-    }
-
-    res.json({
-      message: 'Sync complete',
-      added: addedSongs.length,
-      removed: toRemove.length
-    });
-
-  } catch (err) {
-    res.status(500).json({ message: err.message });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: error.message });
   }
 };
 
-// ✅ IMPORTANT CHANGE HERE (S3 STREAMING)
+//////////////////////////////////////////////////////
+// ✅ GET SONGS
+//////////////////////////////////////////////////////
+export const getSongs = async (req, res) => {
+  const songs = await SongCache.find().sort({ createdAt: -1 });
+  res.json(songs);
+};
+
+//////////////////////////////////////////////////////
+// ✅ SEARCH SONGS
+//////////////////////////////////////////////////////
+export const searchSongs = async (req, res) => {
+  const query = req.query.q;
+
+  const songs = await SongCache.find({
+    $or: [
+      { title: { $regex: query, $options: 'i' } },
+      { artist: { $regex: query, $options: 'i' } }
+    ]
+  });
+
+  res.json(songs);
+};
+
+//////////////////////////////////////////////////////
+// ✅ UPDATE SONG
+//////////////////////////////////////////////////////
+export const updateSong = async (req, res) => {
+  const song = await SongCache.findById(req.params.id);
+
+  if (!song) return res.status(404).json({ message: "Not found" });
+
+  song.title = req.body.title || song.title;
+  song.artist = req.body.artist || song.artist;
+
+  const updated = await song.save();
+  res.json(updated);
+};
+
+//////////////////////////////////////////////////////
+// ✅ DELETE SONG (FIXED ✅)
+//////////////////////////////////////////////////////
+export const deleteSong = async (req, res) => {
+  try {
+    const song = await SongCache.findById(req.params.id);
+
+    if (!song) {
+      return res.status(404).json({ message: 'Song not found' });
+    }
+
+    await deleteCloudinaryFile(song.cloudinaryId);
+    await song.deleteOne();
+
+    res.json({ message: 'Song deleted' });
+
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+//////////////////////////////////////////////////////
+// ✅ STREAM SONG FROM S3
+//////////////////////////////////////////////////////
 export const streamSong = async (req, res) => {
   try {
     const song = await SongCache.findById(req.params.id);
-    if (!song) return res.status(404).json({ message: 'Song not found' });
-
     const key = song.cloudinaryId;
-    if (!key) return res.status(400).json({ message: 'Missing key' });
 
-    // ✅ CHANGE: use S3_BUCKET NOT R2
-    const headCmd = new HeadObjectCommand({
-      Bucket: S3_BUCKET,
-      Key: key
-    });
+    const head = await s3.send(
+      new HeadObjectCommand({ Bucket: S3_BUCKET, Key: key })
+    );
 
-    const headRes = await s3.send(headCmd);
-    const total = headRes.ContentLength;
-
+    const total = head.ContentLength;
     const range = req.headers.range;
 
     if (!range) {
-      const cmd = new GetObjectCommand({ Bucket: S3_BUCKET, Key: key });
-      const data = await s3.send(cmd);
+      const data = await s3.send(
+        new GetObjectCommand({ Bucket: S3_BUCKET, Key: key })
+      );
 
       res.writeHead(200, {
-        'Content-Type': song.mimeType || 'audio/mpeg',
+        'Content-Type': song.mimeType,
         'Content-Length': total
       });
 
@@ -225,27 +174,114 @@ export const streamSong = async (req, res) => {
     const start = parseInt(parts[0]);
     const end = parts[1] ? parseInt(parts[1]) : total - 1;
 
-    const chunkSize = end - start + 1;
-
-    const cmd = new GetObjectCommand({
-      Bucket: S3_BUCKET,
-      Key: key,
-      Range: `bytes=${start}-${end}`
-    });
-
-    const data = await s3.send(cmd);
+    const data = await s3.send(
+      new GetObjectCommand({
+        Bucket: S3_BUCKET,
+        Key: key,
+        Range: `bytes=${start}-${end}`
+      })
+    );
 
     res.writeHead(206, {
       'Content-Range': `bytes ${start}-${end}/${total}`,
       'Accept-Ranges': 'bytes',
-      'Content-Length': chunkSize,
-      'Content-Type': song.mimeType || 'audio/mpeg'
+      'Content-Length': end - start + 1,
+      'Content-Type': song.mimeType
     });
 
     data.Body.pipe(res);
 
   } catch (err) {
-    console.error('Stream error:', err);
     res.status(500).json({ message: err.message });
   }
+};
+
+//////////////////////////////////////////////////////
+// ✅ LIKES
+//////////////////////////////////////////////////////
+export const getLikedSongs = async (req, res) => {
+  const likes = await Like.find({ userId: req.user._id }).populate('songId');
+  res.json(likes.map(l => l.songId));
+};
+
+export const toggleLikeSong = async (req, res) => {
+  const { id } = req.params;
+
+  const existing = await Like.findOne({ userId: req.user._id, songId: id });
+
+  if (existing) {
+    await existing.deleteOne();
+    return res.json({ liked: false });
+  }
+
+  await Like.create({ userId: req.user._id, songId: id });
+  res.json({ liked: true });
+};
+
+//////////////////////////////////////////////////////
+// ✅ SIMPLE FILTER APIS
+//////////////////////////////////////////////////////
+export const getArtists = async (req, res) => {
+  const artists = await SongCache.distinct('artist');
+  res.json(artists);
+};
+
+export const getAlbums = async (req, res) => {
+  const albums = await SongCache.distinct('album');
+  res.json(albums);
+};
+
+export const getGenres = async (req, res) => {
+  const genres = await SongCache.distinct('genre');
+  res.json(genres);
+};
+
+//////////////////////////////////////////////////////
+// ✅ FILTER
+//////////////////////////////////////////////////////
+export const filterSongs = async (req, res) => {
+  const query = {};
+  if (req.query.artist) query.artist = req.query.artist;
+  if (req.query.genre) query.genre = req.query.genre;
+
+  const songs = await SongCache.find(query);
+  res.json(songs);
+};
+
+//////////////////////////////////////////////////////
+// ✅ BY ARTIST / ALBUM / GENRE
+//////////////////////////////////////////////////////
+export const getSongsByArtist = async (req, res) => {
+  const songs = await SongCache.find({ artist: req.params.artist });
+  res.json(songs);
+};
+
+export const getSongsByAlbum = async (req, res) => {
+  const songs = await SongCache.find({ album: req.params.album });
+  res.json(songs);
+};
+
+export const getSongsByGenre = async (req, res) => {
+  const songs = await SongCache.find({ genre: req.params.genre });
+  res.json(songs);
+};
+
+//////////////////////////////////////////////////////
+// ✅ UPLOAD ARTWORK
+//////////////////////////////////////////////////////
+export const uploadArtwork = async (req, res) => {
+  try {
+    const result = await uploadFromBuffer(req.file.buffer, 'art.jpg', 'artwork');
+    res.json({ url: result.url });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+//////////////////////////////////////////////////////
+// ✅ SYNC (OPTIONAL)
+//////////////////////////////////////////////////////
+export const syncCloudinary = async (req, res) => {
+  const files = await getCloudinaryFiles('audio');
+  res.json({ total: files.length });
 };

@@ -28,85 +28,202 @@ export const getYoutubeVideoId = (url) => {
  * @param {string} url - YouTube URL
  * @returns {Promise<object>} - Extracted metadata
  */
+
 export const fetchYoutubeMetadata = async (url) => {
   const videoId = getYoutubeVideoId(url);
   if (!videoId) {
     throw new Error('Invalid YouTube URL format');
   }
 
+  console.log(`[YouTube Service] Fetching metadata for video ID: ${videoId}`);
+
+  const commandOptions = {
+    dumpSingleJson: true,
+    noWarnings: true,
+    // noCallHome: true,
+    noCheckCertificates: true,
+    preferFreeFormats: true,
+    // youtubeSkipDashManifest: true,
+
+    // ✅ CRITICAL FIXES
+    addHeader: [
+      'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+      'Accept-Language: en-US,en;q=0.9',
+      'Referer: https://www.youtube.com/'
+    ],
+
+    // ✅ Avoid 429
+    sleepInterval: 2,
+    maxSleepInterval: 5,
+
+    // ✅ JS runtime (fix signature issues)
+    jsRuntimes: 'node'
+  };
+
+  let info;
+
   try {
-    console.log(`[YouTube Service] Fetching metadata for video ID: ${videoId}`);
-    
-    const info = await youtubedl(url, {
-      dumpSingleJson: true,
-      noWarnings: true,
-      noCallHome: true,
-      noCheckCertificates: true,
-      preferFreeFormats: true,
-      youtubeSkipDashManifest: true,
-      referer: 'https://www.youtube.com/'
-    });
+    console.log('Before yt-dlp');
 
-    // Check for age restriction, privacy, etc.
-    if (info.age_limit && info.age_limit > 0) {
-      console.warn(`[YouTube Service] Warning: Video ID ${videoId} has an age limit of ${info.age_limit}`);
+    info = await youtubedl(url, commandOptions);
+
+    console.log('After yt-dlp');
+  } catch (err) {
+    console.warn('[YouTube Service] First attempt failed, retrying...');
+
+    try {
+      // ✅ retry once (important)
+      info = await youtubedl(url, {
+        ...commandOptions,
+        sleepInterval: 3
+      });
+    } catch (retryErr) {
+      console.error('[YouTube Service] Retry failed:', retryErr);
+      throw new Error(`Failed to extract metadata: ${retryErr.message}`);
     }
-
-    // Get the best thumbnail
-    let thumbnailUrl = '';
-    if (info.thumbnails && info.thumbnails.length > 0) {
-      // Find thumbnail with highest width or default to the last one
-      const sortedThumbnails = [...info.thumbnails].sort((a, b) => (b.width || 0) - (a.width || 0));
-      thumbnailUrl = sortedThumbnails[0].url;
-    } else {
-      thumbnailUrl = info.thumbnail || `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
-    }
-
-    // Parse duration (seconds)
-    const duration = info.duration || 0;
-
-    // Detect language using title heuristics
-    const { detectLanguage } = await import('./metadataService.js');
-    const language = detectLanguage(null, info.title || '');
-
-    // Parse year heuristics
-    let year = info.release_year || null;
-    if (!year && info.upload_date) {
-      year = parseInt(info.upload_date.substring(0, 4));
-    }
-    if (!year && info.title) {
-      const yearMatch = info.title.match(/\b(19\d\d|20\d\d)\b/);
-      if (yearMatch) {
-        year = parseInt(yearMatch[0]);
-      }
-    }
-    if (!year) {
-      year = new Date().getFullYear();
-    }
-
-    // Build metadata response
-    return {
-      youtubeVideoId: videoId,
-      youtubeUrl: `https://www.youtube.com/watch?v=${videoId}`,
-      title: info.title || 'Unknown Title',
-      artist: info.uploader || info.artist || 'Unknown Artist',
-      singer: info.uploader || info.artist || 'Unknown Artist',
-      musicDirector: info.composer || 'Unknown Composer',
-      lyricist: 'Unknown Lyricist',
-      language: language,
-      album: info.album || 'YouTube Import',
-      genre: info.genre || 'Pop',
-      year: year,
-      duration: Math.round(duration),
-      uploadDate: info.upload_date || '',
-      description: info.description || '',
-      thumbnailUrl: thumbnailUrl
-    };
-  } catch (error) {
-    console.error('[YouTube Service] Error fetching metadata:', error);
-    throw new Error(`Failed to extract metadata: ${error.message}`);
   }
+
+  if (!info) {
+    throw new Error('Failed to retrieve video info');
+  }
+
+  // ✅ Thumbnail selection
+  let thumbnailUrl = '';
+  if (info.thumbnails && info.thumbnails.length > 0) {
+    const sortedThumbnails = [...info.thumbnails].sort(
+      (a, b) => (b.width || 0) - (a.width || 0)
+    );
+    thumbnailUrl = sortedThumbnails[0].url;
+  } else {
+    thumbnailUrl =
+      info.thumbnail ||
+      `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
+  }
+
+  // ✅ Duration
+  const duration = info.duration || 0;
+
+  // ✅ Language detection
+  const { detectLanguage } = await import('./metadataService.js');
+  const language = detectLanguage(null, info.title || '');
+
+  // ✅ Year parsing
+  let year = info.release_year || null;
+
+  if (!year && info.upload_date) {
+    year = parseInt(info.upload_date.substring(0, 4));
+  }
+
+  if (!year && info.title) {
+    const match = info.title.match(/\b(19\d\d|20\d\d)\b/);
+    if (match) {
+      year = parseInt(match[0]);
+    }
+  }
+
+  if (!year) {
+    year = new Date().getFullYear();
+  }
+
+  // ✅ FINAL RETURN
+  return {
+    youtubeVideoId: videoId,
+    youtubeUrl: `https://www.youtube.com/watch?v=${videoId}`,
+    title: info.title || 'Unknown Title',
+    artist: info.uploader || info.artist || 'Unknown Artist',
+    singer: info.uploader || info.artist || 'Unknown Artist',
+    musicDirector: info.composer || 'Unknown Composer',
+    lyricist: 'Unknown Lyricist',
+    language,
+    album: info.album || 'YouTube Import',
+    genre: info.genre || 'Pop',
+    year,
+    duration: Math.round(duration),
+    uploadDate: info.upload_date || '',
+    description: info.description || '',
+    thumbnailUrl
+  };
 };
+
+// export const fetchYoutubeMetadata = async (url) => {
+//   const videoId = getYoutubeVideoId(url);
+//   if (!videoId) {
+//     throw new Error('Invalid YouTube URL format');
+//   }
+
+//   try {
+//     console.log(`[YouTube Service] Fetching metadata for video ID: ${videoId}`);
+
+//     const info = await youtubedl(url, {
+//       dumpSingleJson: true,
+//       noWarnings: true,
+//       noCallHome: true,
+//       noCheckCertificates: true,
+//       preferFreeFormats: true,
+//       youtubeSkipDashManifest: true,
+//       referer: 'https://www.youtube.com/'
+//     });
+
+//     // Check for age restriction, privacy, etc.
+//     if (info.age_limit && info.age_limit > 0) {
+//       console.warn(`[YouTube Service] Warning: Video ID ${videoId} has an age limit of ${info.age_limit}`);
+//     }
+
+//     // Get the best thumbnail
+//     let thumbnailUrl = '';
+//     if (info.thumbnails && info.thumbnails.length > 0) {
+//       // Find thumbnail with highest width or default to the last one
+//       const sortedThumbnails = [...info.thumbnails].sort((a, b) => (b.width || 0) - (a.width || 0));
+//       thumbnailUrl = sortedThumbnails[0].url;
+//     } else {
+//       thumbnailUrl = info.thumbnail || `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
+//     }
+
+//     // Parse duration (seconds)
+//     const duration = info.duration || 0;
+
+//     // Detect language using title heuristics
+//     const { detectLanguage } = await import('./metadataService.js');
+//     const language = detectLanguage(null, info.title || '');
+
+//     // Parse year heuristics
+//     let year = info.release_year || null;
+//     if (!year && info.upload_date) {
+//       year = parseInt(info.upload_date.substring(0, 4));
+//     }
+//     if (!year && info.title) {
+//       const yearMatch = info.title.match(/\b(19\d\d|20\d\d)\b/);
+//       if (yearMatch) {
+//         year = parseInt(yearMatch[0]);
+//       }
+//     }
+//     if (!year) {
+//       year = new Date().getFullYear();
+//     }
+
+//     // Build metadata response
+//     return {
+//       youtubeVideoId: videoId,
+//       youtubeUrl: `https://www.youtube.com/watch?v=${videoId}`,
+//       title: info.title || 'Unknown Title',
+//       artist: info.uploader || info.artist || 'Unknown Artist',
+//       singer: info.uploader || info.artist || 'Unknown Artist',
+//       musicDirector: info.composer || 'Unknown Composer',
+//       lyricist: 'Unknown Lyricist',
+//       language: language,
+//       album: info.album || 'YouTube Import',
+//       genre: info.genre || 'Pop',
+//       year: year,
+//       duration: Math.round(duration),
+//       uploadDate: info.upload_date || '',
+//       description: info.description || '',
+//       thumbnailUrl: thumbnailUrl
+//     };
+//   } catch (error) {
+//     console.error('[YouTube Service] Error fetching metadata:', error);
+//     throw new Error(`Failed to extract metadata: ${error.message}`);
+//   }
+// };
 
 /**
  * Download, transcode, upload, and save a YouTube video as a song
@@ -115,7 +232,7 @@ export const fetchYoutubeMetadata = async (url) => {
  */
 export const processYoutubeImport = async (job, updateProgress) => {
   const { youtubeUrl, videoId, customMetadata, userId } = job;
-  
+
   // Ensure temp folder exists
   const tempDir = path.join(process.cwd(), 'temp');
   if (!fs.existsSync(tempDir)) {
@@ -136,7 +253,7 @@ export const processYoutubeImport = async (job, updateProgress) => {
     // 2. DOWNLOAD STREAM
     updateProgress('downloading', 15);
     console.log(`[YouTube Service] Downloading audio stream for video: ${videoId}`);
-    
+
     await youtubedl(youtubeUrl, {
       format: 'bestaudio',
       output: rawAudioPath,
@@ -200,17 +317,17 @@ export const processYoutubeImport = async (job, updateProgress) => {
     console.log('[YouTube Service] Uploading MP3 to Cloudflare R2...');
     const audioFilename = `${customMetadata.title.replace(/[^a-zA-Z0-9]/g, '_')}_${videoId}.mp3`;
     const audioUpload = await uploadFileBuffer(fileBuffer, audioFilename, 'audio');
-    
+
     // 6. UPLOAD THUMBNAIL TO CLOUDFLARE R2 (Extract, clean, and optimize using sharp)
     let thumbnailUrl = customMetadata.thumbnailUrl || '';
     let artworkUrl = '';
-    
+
     if (thumbnailUrl && thumbnailUrl.startsWith('http')) {
       try {
         console.log(`[YouTube Service] Downloading and optimizing artwork: ${thumbnailUrl}`);
         const artworkResponse = await axios.get(thumbnailUrl, { responseType: 'arraybuffer', timeout: 10000 });
         const artworkRawBuffer = Buffer.from(artworkResponse.data);
-        
+
         // Optimize using Sharp
         const sharp = (await import('sharp')).default;
         const artworkBuffer = await sharp(artworkRawBuffer)
@@ -247,7 +364,7 @@ export const processYoutubeImport = async (job, updateProgress) => {
     // 7. SAVE TO MONGODB
     updateProgress('saving', 95);
     console.log('[YouTube Service] Saving song metadata to MongoDB...');
-    
+
     const song = await SongCache.create({
       cloudinaryId: audioUpload.key, // keeping backward compatibility
       url: audioUpload.url,
@@ -270,7 +387,7 @@ export const processYoutubeImport = async (job, updateProgress) => {
       composer: customMetadata.musicDirector || 'Unknown Composer',
       folder: 'youtube-imports',
       uploadedBy: userId,
-      
+
       // YouTube fields
       sourceType: 'youtube',
       youtubeUrl: `https://www.youtube.com/watch?v=${videoId}`,

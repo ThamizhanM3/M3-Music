@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Users, Music, PlayCircle, TrendingUp, Clock, HardDrive, Disc, 
-  Video, Loader, AlertCircle, X, CheckCircle, Edit2, Trash2, 
+import {
+  Users, Music, PlayCircle, TrendingUp, Clock, HardDrive, Disc,
+  Video, Loader, AlertCircle, X, CheckCircle, Edit2, Trash2,
   Save, Play, FileText, ChevronRight
 } from 'lucide-react';
 import axiosInstance from '../../api/axiosInstance';
@@ -37,11 +37,11 @@ const AdminDashboard = () => {
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [inspecting, setInspecting] = useState(false);
   const [inspectError, setInspectError] = useState('');
-  
+
   // Inspected Metadata State (Phase 1)
   const [inspectedData, setInspectedData] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  
+
   // Edited Metadata State (Phase 2)
   const [editedMetadata, setEditedMetadata] = useState({
     title: '',
@@ -56,6 +56,14 @@ const AdminDashboard = () => {
   // Active queue & history jobs
   const [importJobs, setImportJobs] = useState([]);
   const pollIntervalRef = useRef(null);
+  const ACTIVE_JOB_STATUSES = [
+    'pending',
+    'checking_duplicates',
+    'downloading',
+    'converting',
+    'uploading',
+    'saving'
+  ];
 
   // Fetch dashboard stats
   const fetchStats = async () => {
@@ -67,7 +75,7 @@ const AdminDashboard = () => {
         axiosInstance.get(`/api/music/albums`),
         axiosInstance.get(`/api/music/genres`)
       ]);
-      
+
       setStats(prev => ({
         ...prev,
         totalSongs: songsRes.data.length,
@@ -96,21 +104,41 @@ const AdminDashboard = () => {
     }
   };
 
+  // Initial load
   useEffect(() => {
     fetchStats();
     fetchImportJobs();
-    
-    // Set up polling for import jobs
+  }, [token]);
+
+  // Poll only when active jobs exist
+  useEffect(() => {
+    const hasActiveJobs = importJobs.some(job =>
+      ACTIVE_JOB_STATUSES.includes(job.status)
+    );
+
+    if (!hasActiveJobs) {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+      return;
+    }
+
+    if (pollIntervalRef.current) {
+      return;
+    }
+
     pollIntervalRef.current = setInterval(() => {
       fetchImportJobs();
-    }, 2000);
+    }, 5000);
 
     return () => {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
       }
     };
-  }, [token]);
+  }, [importJobs]);
 
   // Inspect YouTube URL (Phase 1)
   const handleInspect = async (e) => {
@@ -123,9 +151,9 @@ const AdminDashboard = () => {
 
     try {
       const res = await axiosInstance.post('/api/music/youtube/inspect', { url: youtubeUrl });
-      
+
       const { metadata, duplicate, duplicateReason, existingSong } = res.data;
-      
+
       setInspectedData({
         ...metadata,
         duplicate,
@@ -162,17 +190,27 @@ const AdminDashboard = () => {
   const handleConfirmImport = async () => {
     if (!inspectedData) return;
 
+    if (inspectedData.duplicate) {
+      const confirmed = window.confirm(
+        'This song appears to be a duplicate. Continue importing anyway?'
+      );
+
+      if (!confirmed) {
+        return;
+      }
+    }
+
     try {
       await axiosInstance.post('/api/music/youtube/import', {
         url: inspectedData.youtubeUrl,
         metadata: editedMetadata
       });
-      
+
       // Reset inspection and close modal
       setIsModalOpen(false);
       setInspectedData(null);
       setYoutubeUrl('');
-      
+
       // Immediately refresh jobs
       fetchImportJobs();
     } catch (err) {
@@ -245,7 +283,7 @@ const AdminDashboard = () => {
       <div className="glass-card p-8 border-primary/20 relative overflow-hidden">
         {/* Subtle decorative video icon background */}
         <Video className="absolute right-[-30px] bottom-[-30px] w-64 h-64 text-red-500/[0.03] rotate-12 pointer-events-none" />
-        
+
         <div className="relative z-10">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-10 h-10 rounded-xl bg-red-500/10 flex items-center justify-center text-red-500">
@@ -259,8 +297,8 @@ const AdminDashboard = () => {
 
           <form onSubmit={handleInspect} className="flex flex-col md:flex-row gap-4 mt-6">
             <div className="flex-1 relative">
-              <input 
-                type="text" 
+              <input
+                type="text"
                 placeholder="Paste YouTube Video URL (e.g. https://www.youtube.com/watch?v=dQw4w9WgXcQ)"
                 className="w-full bg-white/5 border border-white/10 rounded-xl py-3.5 pl-4 pr-12 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-all font-medium"
                 value={youtubeUrl}
@@ -268,8 +306,8 @@ const AdminDashboard = () => {
                 disabled={inspecting}
               />
               {youtubeUrl && (
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   onClick={() => setYoutubeUrl('')}
                   className="absolute right-4 top-4 text-zinc-500 hover:text-white"
                 >
@@ -277,8 +315,8 @@ const AdminDashboard = () => {
                 </button>
               )}
             </div>
-            <button 
-              type="submit" 
+            <button
+              type="submit"
               disabled={inspecting || !youtubeUrl.trim()}
               className="btn-neon py-3.5 px-8 flex items-center justify-center gap-2 text-sm disabled:opacity-40 disabled:scale-100 disabled:shadow-none"
             >
@@ -304,10 +342,10 @@ const AdminDashboard = () => {
 
       {/* Main Grid: Pipeline and System Activity */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        
+
         {/* Active Pipeline Monitor (Takes 2 columns if large, else 1) */}
         <div className="lg:col-span-2 space-y-8">
-          
+
           {/* YouTube Import Progress & Queue */}
           <div className="glass-card p-6 flex flex-col h-full">
             <div className="flex justify-between items-center mb-6">
@@ -316,7 +354,7 @@ const AdminDashboard = () => {
                 YouTube Import Pipeline
               </h3>
               {importJobs.some(j => ['completed', 'failed'].includes(j.status)) && (
-                <button 
+                <button
                   onClick={handleClearHistory}
                   className="text-xs text-zinc-500 hover:text-red-400 transition-colors font-semibold"
                 >
@@ -334,15 +372,14 @@ const AdminDashboard = () => {
                 </div>
               ) : (
                 importJobs.map(job => (
-                  <div 
-                    key={job.id} 
-                    className={`p-4 rounded-xl border transition-all ${
-                      job.status === 'completed' 
-                        ? 'bg-primary/[0.01] border-primary/10 hover:border-primary/20' 
-                        : job.status === 'failed' 
-                        ? 'bg-red-500/[0.01] border-red-500/10 hover:border-red-500/20' 
-                        : 'bg-white/[0.02] border-white/5 shadow-md'
-                    }`}
+                  <div
+                    key={job.id}
+                    className={`p-4 rounded-xl border transition-all ${job.status === 'completed'
+                        ? 'bg-primary/[0.01] border-primary/10 hover:border-primary/20'
+                        : job.status === 'failed'
+                          ? 'bg-red-500/[0.01] border-red-500/10 hover:border-red-500/20'
+                          : 'bg-white/[0.02] border-white/5 shadow-md'
+                      }`}
                   >
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex items-center gap-4 min-w-0">
@@ -364,8 +401,8 @@ const AdminDashboard = () => {
                             <span>{job.customMetadata?.artist || 'YouTube'}</span>
                             <span className="w-1 h-1 rounded-full bg-zinc-700" />
                             <span className="font-mono text-[10px]">
-                              {job.customMetadata?.duration 
-                                ? `${Math.floor(job.customMetadata.duration / 60)}:${String(job.customMetadata.duration % 60).padStart(2, '0')}` 
+                              {job.customMetadata?.duration
+                                ? `${Math.floor(job.customMetadata.duration / 60)}:${String(job.customMetadata.duration % 60).padStart(2, '0')}`
                                 : '0:00'}
                             </span>
                           </p>
@@ -375,10 +412,10 @@ const AdminDashboard = () => {
                       {/* Status & Cancel Control */}
                       <div className="flex items-center gap-3 shrink-0">
                         {getStatusBadge(job.status)}
-                        
+
                         {/* Cancel button for active pipelines */}
                         {['pending', 'downloading', 'converting', 'uploading', 'saving'].includes(job.status) && (
-                          <button 
+                          <button
                             onClick={() => handleCancelJob(job.id)}
                             className="p-1.5 hover:bg-white/5 rounded-lg text-zinc-500 hover:text-red-400 transition-colors"
                             title="Cancel Import"
@@ -393,8 +430,8 @@ const AdminDashboard = () => {
                     {['downloading', 'converting', 'uploading', 'saving', 'checking_duplicates'].includes(job.status) && (
                       <div className="mt-4 space-y-2">
                         <div className="w-full bg-zinc-900 rounded-full h-1.5 overflow-hidden border border-white/[0.02]">
-                          <div 
-                            className="bg-primary h-full transition-all duration-500 shadow-[0_0_10px_var(--primary)]" 
+                          <div
+                            className="bg-primary h-full transition-all duration-500 shadow-[0_0_10px_var(--primary)]"
                             style={{ width: `${job.progress}%` }}
                           />
                         </div>
@@ -506,22 +543,22 @@ const AdminDashboard = () => {
       <AnimatePresence>
         {isModalOpen && inspectedData && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsModalOpen(false)}
               className="absolute inset-0 bg-black/85 backdrop-blur-md"
             />
-            
-            <motion.div 
+
+            <motion.div
               initial={{ scale: 0.95, y: 15, opacity: 0 }}
               animate={{ scale: 1, y: 0, opacity: 1 }}
               exit={{ scale: 0.95, y: 15, opacity: 0 }}
               className="relative w-full max-w-4xl glass-card p-6 md:p-8 shadow-2xl flex flex-col md:flex-row gap-8 max-h-[90vh] overflow-y-auto"
             >
               {/* Close Button */}
-              <button 
+              <button
                 onClick={() => setIsModalOpen(false)}
                 className="absolute top-4 right-4 text-zinc-500 hover:text-white p-2 transition-all rounded-full hover:bg-white/5"
               >
@@ -589,20 +626,20 @@ const AdminDashboard = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-1">
                       <label className="text-[10px] font-bold text-zinc-500 uppercase px-1">Song Title</label>
-                      <input 
-                        type="text" 
+                      <input
+                        type="text"
                         className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 px-4 text-sm outline-none focus:border-primary transition-all text-white font-medium"
                         value={editedMetadata.title}
-                        onChange={(e) => setEditedMetadata({...editedMetadata, title: e.target.value})}
+                        onChange={(e) => setEditedMetadata({ ...editedMetadata, title: e.target.value })}
                       />
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] font-bold text-zinc-500 uppercase px-1">Artist / Uploader</label>
-                      <input 
-                        type="text" 
+                      <input
+                        type="text"
                         className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 px-4 text-sm outline-none focus:border-primary transition-all text-white font-medium"
                         value={editedMetadata.artist}
-                        onChange={(e) => setEditedMetadata({...editedMetadata, artist: e.target.value})}
+                        onChange={(e) => setEditedMetadata({ ...editedMetadata, artist: e.target.value })}
                       />
                     </div>
                   </div>
@@ -610,22 +647,22 @@ const AdminDashboard = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-1">
                       <label className="text-[10px] font-bold text-zinc-500 uppercase px-1">Singer(s)</label>
-                      <input 
-                        type="text" 
+                      <input
+                        type="text"
                         placeholder="e.g. Benny Dayal, Naresh Iyer"
                         className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 px-4 text-sm outline-none focus:border-primary transition-all text-white font-medium"
                         value={editedMetadata.singer}
-                        onChange={(e) => setEditedMetadata({...editedMetadata, singer: e.target.value})}
+                        onChange={(e) => setEditedMetadata({ ...editedMetadata, singer: e.target.value })}
                       />
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] font-bold text-zinc-500 uppercase px-1">Music Director / Composer</label>
-                      <input 
-                        type="text" 
+                      <input
+                        type="text"
                         placeholder="e.g. A.R. Rahman"
                         className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 px-4 text-sm outline-none focus:border-primary transition-all text-white font-medium"
                         value={editedMetadata.musicDirector}
-                        onChange={(e) => setEditedMetadata({...editedMetadata, musicDirector: e.target.value})}
+                        onChange={(e) => setEditedMetadata({ ...editedMetadata, musicDirector: e.target.value })}
                       />
                     </div>
                   </div>
@@ -633,21 +670,21 @@ const AdminDashboard = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-1">
                       <label className="text-[10px] font-bold text-zinc-500 uppercase px-1">Lyricist</label>
-                      <input 
-                        type="text" 
+                      <input
+                        type="text"
                         placeholder="e.g. Madhan Karky"
                         className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 px-4 text-sm outline-none focus:border-primary transition-all text-white font-medium"
                         value={editedMetadata.lyricist}
-                        onChange={(e) => setEditedMetadata({...editedMetadata, lyricist: e.target.value})}
+                        onChange={(e) => setEditedMetadata({ ...editedMetadata, lyricist: e.target.value })}
                       />
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] font-bold text-zinc-500 uppercase px-1">Album Name</label>
-                      <input 
-                        type="text" 
+                      <input
+                        type="text"
                         className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 px-4 text-sm outline-none focus:border-primary transition-all text-white font-medium"
                         value={editedMetadata.album}
-                        onChange={(e) => setEditedMetadata({...editedMetadata, album: e.target.value})}
+                        onChange={(e) => setEditedMetadata({ ...editedMetadata, album: e.target.value })}
                       />
                     </div>
                   </div>
@@ -655,19 +692,19 @@ const AdminDashboard = () => {
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="space-y-1">
                       <label className="text-[10px] font-bold text-zinc-500 uppercase px-1">Genre Category</label>
-                      <input 
-                        type="text" 
+                      <input
+                        type="text"
                         className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 px-4 text-sm outline-none focus:border-primary transition-all text-white font-medium"
                         value={editedMetadata.genre}
-                        onChange={(e) => setEditedMetadata({...editedMetadata, genre: e.target.value})}
+                        onChange={(e) => setEditedMetadata({ ...editedMetadata, genre: e.target.value })}
                       />
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] font-bold text-zinc-500 uppercase px-1">Language</label>
-                      <select 
+                      <select
                         className="w-full bg-zinc-900 border border-white/10 rounded-xl py-2.5 px-4 text-sm outline-none focus:border-primary transition-all text-white font-medium appearance-none"
                         value={editedMetadata.language}
-                        onChange={(e) => setEditedMetadata({...editedMetadata, language: e.target.value})}
+                        onChange={(e) => setEditedMetadata({ ...editedMetadata, language: e.target.value })}
                       >
                         {['Tamil', 'English', 'Hindi', 'Telugu', 'Malayalam', 'Kannada', 'Japanese', 'Korean', 'Unknown'].map(lang => (
                           <option key={lang} value={lang}>{lang}</option>
@@ -676,46 +713,45 @@ const AdminDashboard = () => {
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] font-bold text-zinc-500 uppercase px-1">Release Year</label>
-                      <input 
-                        type="number" 
+                      <input
+                        type="number"
                         className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 px-4 text-sm outline-none focus:border-primary transition-all text-white font-medium"
                         value={editedMetadata.year}
-                        onChange={(e) => setEditedMetadata({...editedMetadata, year: e.target.value})}
+                        onChange={(e) => setEditedMetadata({ ...editedMetadata, year: e.target.value })}
                       />
                     </div>
                   </div>
 
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold text-zinc-500 uppercase px-1">Artwork URL Link</label>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 px-4 text-xs outline-none focus:border-primary transition-all text-zinc-300 font-mono"
                       value={editedMetadata.thumbnailUrl}
-                      onChange={(e) => setEditedMetadata({...editedMetadata, thumbnailUrl: e.target.value})}
+                      onChange={(e) => setEditedMetadata({ ...editedMetadata, thumbnailUrl: e.target.value })}
                     />
                   </div>
 
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold text-zinc-500 uppercase px-1">Video Description</label>
-                    <textarea 
+                    <textarea
                       rows={3}
                       className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 px-4 text-xs outline-none focus:border-primary transition-all text-zinc-400 font-sans resize-none custom-scrollbar"
                       value={editedMetadata.description}
-                      onChange={(e) => setEditedMetadata({...editedMetadata, description: e.target.value})}
+                      onChange={(e) => setEditedMetadata({ ...editedMetadata, description: e.target.value })}
                     />
                   </div>
 
                   {/* Actions buttons */}
                   <div className="flex gap-4 pt-4 border-t border-white/5">
-                    <button 
+                    <button
                       onClick={() => setIsModalOpen(false)}
                       className="flex-1 py-3 bg-white/5 hover:bg-white/10 text-white font-bold rounded-xl transition-all border border-white/5 text-sm"
                     >
                       Dismiss
                     </button>
-                    <button 
+                    <button
                       onClick={handleConfirmImport}
-                      disabled={inspectedData.duplicate && !window.confirm('This seems to be a duplicate. Are you sure you want to force import anyway?')}
                       className="flex-1 btn-neon py-3 text-sm flex items-center justify-center gap-2"
                     >
                       <Save className="w-4 h-4 text-black" />

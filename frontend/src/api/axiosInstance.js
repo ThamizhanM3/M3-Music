@@ -2,7 +2,7 @@ import axios from 'axios';
 import useAuthStore from '../store/authStore';
 
 const axiosInstance = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || '',
+  baseURL: window.__ENV__?.VITE_API_URL ?? import.meta.env.VITE_API_URL,
 });
 
 // Request interceptor to add the auth token to every request
